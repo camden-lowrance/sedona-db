@@ -1,0 +1,24 @@
+[workspace]
+authors = ["Camden Lowrance <camden.lowrance@beckshybrids.com>"]
+channels = ["conda-forge"]
+name = "sedona-db"
+platforms = ["osx-arm64", "win-64"]
+version = "0.1.0"
+
+[tasks]
+install-python = "python -m pip install -e \"python/sedonadb/[test]\""
+test-st-asbinary-rust = "cargo test -p sedona-functions st_asbinary"
+test-st-asbinary-geoparquet = "sh -c 'DYLD_FALLBACK_LIBRARY_PATH=\"$CONDA_PREFIX/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}\" cargo test -p sedona st_asbinary_geoparquet_returns_binary'"
+
+[dependencies]
+python = "3.13.*"
+pip = "*"
+maturin = ">=1.8,<2"
+cmake = ">=4.3.2,<5"
+geos = ">=3.14.1,<4"
+gdal = ">=3.13.0,<4"
+proj = ">=9.8.1,<10"
+libabseil = ">=20260107.1,<20260108"
+openssl = ">=3.6.2,<4"
+pkg-config = ">=0.29.2,<0.30"
+pre-commit = "*"

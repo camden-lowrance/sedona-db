@@ -52,3 +52,7 @@ dev/release/.env
 
 /.luarc.json
 .positai
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
