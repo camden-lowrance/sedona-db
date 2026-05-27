@@ -343,7 +343,8 @@ To contribute to the SedonaDB documentation:
 
 SQL function reference is special: because we provide so many functions, we have
 a specialized syntax for documenting them. The minimum required documentation for
-a function is a file `docs/reference/sql/function_name.qmd`:
+a function is a file `docs/reference/sql/function_name.qmd`. For implementation
+conventions, see the [Scalar Function Style Guide](scalar-function-style-guide.md).
 
     ---
     title: ST_FunctionName
