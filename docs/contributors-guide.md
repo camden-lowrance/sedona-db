@@ -178,6 +178,9 @@ You can install a recent version of the Rust compiler and cargo from
 
 A local development version of the CLI can be run with `cargo run --bin sedona-cli`.
 
+For scalar SQL function implementation conventions, see the
+[Scalar Function Style Guide](scalar-function-style-guide.md).
+
 ## Test data setup
 
 Some tests require submodules that contain test data or pinned versions of

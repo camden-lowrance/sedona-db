@@ -52,7 +52,9 @@ nav:
         - Iceberg: iceberg.md
         - Working with Parquet Files: working-with-parquet-files.md
         - Working with SQL in SedonaDB: working-with-sql-sedonadb.md
-      - Contributors Guide: contributors-guide.md
+      - Contributors:
+        - Contributors Guide: contributors-guide.md
+        - Scalar Function Style Guide: scalar-function-style-guide.md
       - Release notes: release-notes.md
   - SedonaSpark: https://sedona.apache.org/latest/sedonaspark/
   - SedonaFlink: https://sedona.apache.org/latest/sedonaflink/
