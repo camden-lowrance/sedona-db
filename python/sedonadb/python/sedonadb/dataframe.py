@@ -1796,7 +1796,9 @@ class DataFrame:
 
         # GDAL does not support newer Arrow types like string views util 3.14, so we export a
         # reader with simpler types here
-        self_simplified = self._impl.to_stream(self._ctx._impl, simplify=True)
+        self_simplified = self._impl.to_stream(
+            self._ctx._impl, simplify=True, normalize_geometry=geometry_name
+        )
 
         # Writer: pyogrio.write_arrow() via Cython ogr_write_arrow()
         # https://github.com/geopandas/pyogrio/blob/3b2d40273b501c10ecf46cbd37c6e555754c89af/pyogrio/raw.py#L755-L897

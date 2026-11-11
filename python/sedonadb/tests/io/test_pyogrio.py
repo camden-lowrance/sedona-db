@@ -17,6 +17,7 @@
 
 import io
 import multiprocessing
+import struct
 import tempfile
 import threading
 import time
@@ -271,6 +272,197 @@ def test_write_ogr_buffer(con):
     # Ensure reasonable error if driver is not specified
     with pytest.raises(ValueError, match="driver must be provided"):
         df.to_pyogrio(buf)
+
+
+def test_write_ogr_ewkb_with_srid(con, tmp_path):
+    ewkb = bytes.fromhex("0101000020ad1000000000000000000000000000000000f03f")
+    ordinary_wkb = shapely.to_wkb(shapely.Point(2, 3))
+    con.create_data_frame(
+        pa.table({"idx": [0, 1, 2], "wkb": [ewkb, ordinary_wkb, None]})
+    ).to_view("ewkb_export", overwrite=True)
+    df = con.sql(
+        """
+        SELECT idx, ST_SetCrs(ST_GeomFromWKB(wkb), 'EPSG:4269') AS geometry
+        FROM ewkb_export ORDER BY idx
+        """
+    )
+
+    path = tmp_path / "ewkb.gpkg"
+    df.to_pyogrio(path)
+    result = geopandas.read_file(path).sort_values("idx").reset_index(drop=True)
+    expected = geopandas.GeoDataFrame(
+        {"idx": [0, 1, 2]},
+        geometry=geopandas.GeoSeries.from_wkt(
+            ["POINT (0 1)", "POINT (2 3)", None], crs="EPSG:4269"
+        ),
+    )
+    geopandas.testing.assert_geodataframe_equal(result, expected)
+
+
+@pytest.mark.parametrize(
+    "wkt",
+    [
+        "POINT Z (0 1 2)",
+        "POINT EMPTY",
+        "LINESTRING (0 0, 1 2)",
+        "POLYGON ((0 0, 2 0, 2 2, 0 0))",
+        "MULTIPOINT ((0 1), (2 3))",
+        "MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))",
+        "MULTIPOLYGON (((0 0, 2 0, 2 2, 0 0)))",
+        "GEOMETRYCOLLECTION (POINT (0 1), LINESTRING (0 0, 2 3))",
+        "GEOMETRYCOLLECTION EMPTY",
+    ],
+)
+@pytest.mark.parametrize("byte_order", [0, 1])
+@pytest.mark.parametrize(
+    ("flavor", "include_srid"),
+    [("iso", False), ("extended", False), ("extended", True)],
+)
+def test_write_ogr_ewkb_geometry_types(
+    con, tmp_path, wkt, byte_order, flavor, include_srid
+):
+    geometry = shapely.set_srid(shapely.from_wkt(wkt), 4269)
+    ewkb = shapely.to_wkb(
+        geometry,
+        include_srid=include_srid,
+        byte_order=byte_order,
+        flavor=flavor,
+    )
+    con.create_data_frame(pa.table({"wkb": [ewkb]})).to_view(
+        "ewkb_geometry_types", overwrite=True
+    )
+    df = con.sql(
+        "SELECT ST_SetCrs(ST_GeomFromWKB(wkb), 'EPSG:4269') AS geometry "
+        "FROM ewkb_geometry_types"
+    )
+
+    path = tmp_path / "ewkb.gpkg"
+    df.to_pyogrio(path)
+    result = geopandas.read_file(path)
+    assert result.crs.to_epsg() == 4269
+    assert shapely.to_wkt(result.geometry.iloc[0]) == shapely.to_wkt(geometry)
+
+
+def test_write_ogr_ewkb_preserves_row_order(con, tmp_path):
+    n = 10_000
+    ewkb = bytes.fromhex("0101000020ad1000000000000000000000000000000000f03f")
+    con.create_data_frame(pa.table({"idx": range(n), "wkb": [ewkb] * n})).to_view(
+        "ewkb_order", overwrite=True
+    )
+    df = con.sql(
+        "SELECT idx, ST_SetCrs(ST_GeomFromWKB(wkb), 'EPSG:4269') AS geometry "
+        "FROM ewkb_order ORDER BY idx DESC"
+    )
+
+    path = tmp_path / "ewkb_order.gpkg"
+    df.to_pyogrio(path)
+    result = geopandas.read_file(path)
+    assert result["idx"].tolist() == list(range(n - 1, -1, -1))
+    assert result.geometry.notna().all()
+
+
+def test_write_ogr_large_wkb_with_explicit_geometry_name(con, tmp_path):
+    ewkb = bytes.fromhex("0101000020ad1000000000000000000000000000000000f03f")
+    geometry_type = ga.large_wkb().with_crs("EPSG:4269")
+    geometry = geometry_type.wrap_array(pa.array([ewkb, None], type=pa.large_binary()))
+    df = con.create_data_frame(pa.table({"shape": geometry}))
+
+    path = tmp_path / "large_wkb.gpkg"
+    df.to_pyogrio(path, geometry_name="shape")
+    result = geopandas.read_file(path)
+    assert result.crs.to_epsg() == 4269
+    assert shapely.to_wkt(result.geometry.iloc[0]) == "POINT (0 1)"
+    assert result.geometry.iloc[1] is None
+
+
+def test_write_ogr_nested_ewkb(con, tmp_path):
+    collection_header = bytes.fromhex("010700000001000000")
+    ewkb_point = bytes.fromhex("0101000020ad1000000000000000000000000000000000f03f")
+    con.create_data_frame(pa.table({"wkb": [collection_header + ewkb_point]})).to_view(
+        "nested_ewkb", overwrite=True
+    )
+    df = con.sql(
+        "SELECT ST_SetCrs(ST_GeomFromWKB(wkb), 'EPSG:4269') AS geometry "
+        "FROM nested_ewkb"
+    )
+
+    path = tmp_path / "nested_ewkb.gpkg"
+    df.to_pyogrio(path)
+    result = geopandas.read_file(path)
+    assert result.crs.to_epsg() == 4269
+    assert shapely.to_wkt(result.geometry.iloc[0]) == "GEOMETRYCOLLECTION (POINT (0 1))"
+
+
+def test_write_ogr_multipoint_with_mixed_byte_order(con, tmp_path):
+    header = bytes.fromhex("010400000002000000")
+    first = shapely.to_wkb(shapely.Point(1, 2), byte_order=1, flavor="iso")
+    second = shapely.to_wkb(shapely.Point(3, 4), byte_order=0, flavor="iso")
+    geometry = (
+        ga.wkb()
+        .with_crs("EPSG:4269")
+        .wrap_array(pa.array([header + first + second], type=pa.binary()))
+    )
+    df = con.create_data_frame(pa.table({"geometry": geometry}))
+
+    path = tmp_path / "mixed_byte_order.gpkg"
+    df.to_pyogrio(path)
+    result = geopandas.read_file(path)
+    assert shapely.to_wkt(result.geometry.iloc[0]) == "MULTIPOINT ((1 2), (3 4))"
+
+
+def test_write_ogr_multipoint_with_nested_srid(con, tmp_path):
+    header = bytes.fromhex("010400000002000000")
+    first = shapely.to_wkb(
+        shapely.set_srid(shapely.Point(1, 2), 4269), include_srid=True
+    )
+    second = shapely.to_wkb(shapely.Point(3, 4), flavor="iso")
+    geometry = (
+        ga.wkb()
+        .with_crs("EPSG:4269")
+        .wrap_array(pa.array([header + first + second], type=pa.binary()))
+    )
+    df = con.create_data_frame(pa.table({"geometry": geometry}))
+
+    path = tmp_path / "nested_srid.gpkg"
+    df.to_pyogrio(path)
+    result = geopandas.read_file(path)
+    assert shapely.to_wkt(result.geometry.iloc[0]) == "MULTIPOINT ((1 2), (3 4))"
+
+
+@pytest.mark.parametrize("nested_srid", [False, True])
+def test_write_ogr_collection_with_curved_geometry(con, tmp_path, nested_srid):
+    pyogrio = pytest.importorskip("pyogrio")
+    collection = struct.pack("<BII", 1, 7, 1)
+    circular_string = struct.pack("<BII6d", 1, 8, 3, 0, 0, 1, 1, 2, 0)
+    if nested_srid:
+        circular_input = struct.pack(
+            "<BIII6d", 1, 8 | 0x20000000, 4269, 3, 0, 0, 1, 1, 2, 0
+        )
+    else:
+        circular_input = circular_string
+    wkb = collection + circular_input
+    geometry = (
+        ga.wkb().with_crs("EPSG:4269").wrap_array(pa.array([wkb], type=pa.binary()))
+    )
+    df = con.create_data_frame(pa.table({"geometry": geometry}))
+
+    path = tmp_path / "curved.gpkg"
+    df.to_pyogrio(path)
+    metadata, result = pyogrio.read_arrow(path)
+    assert result[metadata["geometry_name"]][0].as_py() == collection + circular_string
+
+
+def test_write_ogr_rejects_truncated_ewkb(con, tmp_path):
+    truncated = bytes.fromhex("0101000020ad100000")
+    geometry = (
+        ga.wkb()
+        .with_crs("EPSG:4269")
+        .wrap_array(pa.array([truncated], type=pa.binary()))
+    )
+    df = con.create_data_frame(pa.table({"geometry": geometry}))
+
+    with pytest.raises(RuntimeError, match="Error while accessing batch from stream"):
+        df.to_pyogrio(tmp_path / "truncated.gpkg")
 
 
 def test_write_ogr_no_geometry(con):

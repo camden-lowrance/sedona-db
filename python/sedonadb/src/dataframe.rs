@@ -46,6 +46,7 @@ use crate::import_from::{import_arrow_scalar, import_arrow_schema};
 use crate::reader::new_py_streaming_reader;
 use crate::runtime::wait_for_future;
 use crate::schema::PySedonaSchema;
+use crate::wkb_export::normalize_wkb_reader;
 
 #[pyclass]
 
@@ -454,11 +455,13 @@ impl InternalDataFrame {
         Ok(batches)
     }
 
+    #[pyo3(signature = (ctx, simplify=None, normalize_geometry=None))]
     fn to_stream<'py>(
         &self,
         py: Python<'py>,
         ctx: &InternalContext,
         simplify: Option<bool>,
+        normalize_geometry: Option<String>,
     ) -> Result<StreamingResult, PySedonaError> {
         let stream = wait_for_future(py, &self.runtime, self.inner.clone().execute_stream())??;
         let reader = new_py_streaming_reader(stream, self.runtime.clone());
@@ -466,6 +469,10 @@ impl InternalDataFrame {
 
         if simplify.unwrap_or(false) {
             reader = simplify_record_batch_reader(&ctx.inner.ctx.state(), reader)?;
+        }
+
+        if let Some(geometry_name) = normalize_geometry {
+            reader = normalize_wkb_reader(reader, &geometry_name)?;
         }
 
         Ok(StreamingResult {

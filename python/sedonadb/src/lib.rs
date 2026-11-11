@@ -39,6 +39,7 @@ mod reader;
 mod runtime;
 mod schema;
 mod udf;
+mod wkb_export;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
